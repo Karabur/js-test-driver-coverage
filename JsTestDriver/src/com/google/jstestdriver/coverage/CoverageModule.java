@@ -34,8 +34,10 @@ import java.io.FileWriter;
 import java.io.IOException;
 import java.io.PrintStream;
 import java.lang.annotation.Annotation;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
+import java.util.regex.Pattern;
 
 /**
  * Configure the code coverage plugin.
@@ -44,11 +46,31 @@ import java.util.Set;
  */
 public class CoverageModule extends AbstractModule {
 
-  private final List<String> excludes;
+  private final List<String> excludes = new ArrayList<String>();
+  private final List<Pattern> includesRegex = new ArrayList<Pattern>();
+  private final List<Pattern> excludesRegex = new ArrayList<Pattern>();
 
-  public CoverageModule(List<String> excludes) {
-    this.excludes = excludes;
+  private static final String INCLUDES_REGEX_PREFIX = "includesRegex:";
+  private static final String EXCLUDES_REGEX_PREFIX = "excludesRegex:";
+
+  public CoverageModule(List<String> args) {
+      classifyArgs(args);
   }
+
+    private void classifyArgs(List<String> args) {
+        for(String arg: args) {
+            arg = arg.trim();
+            if(arg.startsWith(INCLUDES_REGEX_PREFIX)) {
+                String inclRegex = arg.substring(INCLUDES_REGEX_PREFIX.length()).trim();
+                includesRegex.add(Pattern.compile(inclRegex));
+            } else if(arg.startsWith(EXCLUDES_REGEX_PREFIX)) {
+                String exclRegex = arg.substring(EXCLUDES_REGEX_PREFIX.length()).trim();
+                excludesRegex.add(Pattern.compile(exclRegex));
+            } else {
+                excludes.add(arg);
+            }
+        }
+    }
 
   @Override
   protected void configure() {
@@ -62,6 +84,10 @@ public class CoverageModule extends AbstractModule {
         .addBinding().to(CoverageActionDecorator.class);
     bind(new TypeLiteral<Set<String>>(){})
       .annotatedWith(new CoverageImpl("coverageExcludes")).toInstance(Sets.newHashSet(excludes));
+      bind(new TypeLiteral<List<Pattern>>(){})
+        .annotatedWith(new CoverageImpl("coverageIncludesRegex")).toInstance(includesRegex);
+      bind(new TypeLiteral<List<Pattern>>(){})
+        .annotatedWith(new CoverageImpl("coverageExcludesRegex")).toInstance(excludesRegex);
     // TODO(corysmith): Remove this when there is a correct separation of phases.
     bind(BrowserActionProvider.class).to(CoverageThreadedActionProvider.class);
   }

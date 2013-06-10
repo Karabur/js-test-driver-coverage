@@ -23,7 +23,9 @@ import com.google.jstestdriver.hooks.FileLoadPostProcessor;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.util.List;
 import java.util.Set;
+import java.util.regex.Pattern;
 
 /**
  * Instruments the javascript code found in the FileInfo.
@@ -36,25 +38,50 @@ public class CoverageInstrumentingProcessor implements FileLoadPostProcessor {
       LoggerFactory.getLogger(CoverageInstrumentingProcessor.class);
   private final Instrumentor decorator;
   private final Set<String> excludes;
+  private final List<Pattern> includesRegex;
+  private final List<Pattern> excludesRegex;
   private final CoverageAccumulator accumulator;
   private final Time time;
+
 
   @Inject
   public CoverageInstrumentingProcessor(Instrumentor decorator,
                                         @Coverage("coverageExcludes") Set<String> excludes,
+                                        @Coverage("coverageIncludesRegex") List<Pattern> includesRegex,
+                                        @Coverage("coverageExcludesRegex") List<Pattern> excludesRegex,
                                         CoverageAccumulator accumulator,
                                         Time time) {
     this.decorator = decorator;
     this.excludes = excludes;
+    this.includesRegex = includesRegex;
+    this.excludesRegex = excludesRegex;
     this.accumulator = accumulator;
     this.time = time;
+  }
+
+    /**
+     * Check if at least one pattern can be found in filePath
+     *
+     * @param file
+     * @param patterns
+     * @return
+     */
+  private boolean findPattern(FileInfo file, List<Pattern> patterns) {
+      if(file == null || patterns == null)
+          return false;
+      for(Pattern pattern: patterns) {
+            if(pattern.matcher(file.getFilePath()).find())
+                return true;
+      }
+      return false;
   }
 
   public FileInfo process(FileInfo file) {
     if (file.getFilePath().contains("LCOV.js") ||
         !file.canLoad() ||
-        file.isServeOnly() ||
+        (file.isServeOnly() && !findPattern(file, includesRegex)) ||
         excludes.contains(file.getFilePath()) ||
+        findPattern(file, excludesRegex) ||
         file.getData().trim().isEmpty()) {
       return file;
     }
