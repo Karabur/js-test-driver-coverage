@@ -815,9 +815,13 @@ fragment EscapeSequence
 	)
 	;
 
+fragment LineContinuation
+  : BSLASH EOL
+  ;
+
 StringLiteral
-	: SQUOTE ( ~( SQUOTE | BSLASH | LineTerminator ) | EscapeSequence )* SQUOTE
-	| DQUOTE ( ~( DQUOTE | BSLASH | LineTerminator ) | EscapeSequence )* DQUOTE
+	: SQUOTE ( ~( SQUOTE | BSLASH | LineTerminator ) | EscapeSequence | LineContinuation )* SQUOTE
+	| DQUOTE ( ~( DQUOTE | BSLASH | LineTerminator ) | EscapeSequence | LineContinuation )* DQUOTE
 	;
 
 // $>
