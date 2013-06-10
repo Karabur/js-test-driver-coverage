@@ -1,0 +1,150 @@
+Index: src-test/com/google/jstestdriver/coverage/CoverageInstrumentingProcessorTest.java
+===================================================================
+--- src-test/com/google/jstestdriver/coverage/CoverageInstrumentingProcessorTest.java	(revision 1100)
++++ src-test/com/google/jstestdriver/coverage/CoverageInstrumentingProcessorTest.java	(working copy)
+@@ -38,7 +38,7 @@
+     final Instant instant = new Instant(System.currentTimeMillis());
+     FileInfo decorated =
+         new CoverageInstrumentingProcessor(new DecoratorStub(expected, code),
+-            Collections.<String>emptySet(), accumulator, new Time() {
++            Collections.<String>emptySet(), null, null, accumulator, new Time() {
+               public Instant now() {
+                 return instant;
+               }
+@@ -57,7 +57,7 @@
+     FileInfo empty = new FileInfo("foobar.js", 0, -1, true, false, "\n", "foobar.js");
+     CoverageInstrumentingProcessor processor =
+         new CoverageInstrumentingProcessor(null,
+-            Sets.<String>newHashSet(excluded.getFilePath()),
++            Sets.<String>newHashSet(excluded.getFilePath()), null, null,
+             null, null);
+     assertSame(lcov, processor.process(lcov));
+     assertSame(serveOnly, processor.process(serveOnly));
+Index: src/com/google/jstestdriver/coverage/CoverageInstrumentingProcessor.java
+===================================================================
+--- src/com/google/jstestdriver/coverage/CoverageInstrumentingProcessor.java	(revision 1100)
++++ src/com/google/jstestdriver/coverage/CoverageInstrumentingProcessor.java	(working copy)
+@@ -23,7 +23,9 @@
+ import org.slf4j.Logger;
+ import org.slf4j.LoggerFactory;
+ 
++import java.util.List;
+ import java.util.Set;
++import java.util.regex.Pattern;
+ 
+ /**
+  * Instruments the javascript code found in the FileInfo.
+@@ -36,25 +38,50 @@
+       LoggerFactory.getLogger(CoverageInstrumentingProcessor.class);
+   private final Instrumentor decorator;
+   private final Set<String> excludes;
++  private final List<Pattern> includesRegex;
++  private final List<Pattern> excludesRegex;
+   private final CoverageAccumulator accumulator;
+   private final Time time;
+ 
++
+   @Inject
+   public CoverageInstrumentingProcessor(Instrumentor decorator,
+                                         @Coverage("coverageExcludes") Set<String> excludes,
++                                        @Coverage("coverageIncludesRegex") List<Pattern> includesRegex,
++                                        @Coverage("coverageExcludesRegex") List<Pattern> excludesRegex,
+                                         CoverageAccumulator accumulator,
+                                         Time time) {
+     this.decorator = decorator;
+     this.excludes = excludes;
++    this.includesRegex = includesRegex;
++    this.excludesRegex = excludesRegex;
+     this.accumulator = accumulator;
+     this.time = time;
+   }
+ 
++    /**
++     * Check if at least one pattern can be found in filePath
++     *
++     * @param file
++     * @param patterns
++     * @return
++     */
++  private boolean findPattern(FileInfo file, List<Pattern> patterns) {
++      if(file == null || patterns == null)
++          return false;
++      for(Pattern pattern: patterns) {
++            if(pattern.matcher(file.getFilePath()).find())
++                return true;
++      }
++      return false;
++  }
++
+   public FileInfo process(FileInfo file) {
+     if (file.getFilePath().contains("LCOV.js") ||
+         !file.canLoad() ||
+-        file.isServeOnly() ||
++        (file.isServeOnly() && !findPattern(file, includesRegex)) ||
+         excludes.contains(file.getFilePath()) ||
++        findPattern(file, excludesRegex) ||
+         file.getData().trim().isEmpty()) {
+       return file;
+     }
+Index: src/com/google/jstestdriver/coverage/CoverageModule.java
+===================================================================
+--- src/com/google/jstestdriver/coverage/CoverageModule.java	(revision 1100)
++++ src/com/google/jstestdriver/coverage/CoverageModule.java	(working copy)
+@@ -34,8 +34,10 @@
+ import java.io.IOException;
+ import java.io.PrintStream;
+ import java.lang.annotation.Annotation;
++import java.util.ArrayList;
+ import java.util.List;
+ import java.util.Set;
++import java.util.regex.Pattern;
+ 
+ /**
+  * Configure the code coverage plugin.
+@@ -44,12 +46,32 @@
+  */
+ public class CoverageModule extends AbstractModule {
+ 
+-  private final List<String> excludes;
++  private final List<String> excludes = new ArrayList<String>();
++  private final List<Pattern> includesRegex = new ArrayList<Pattern>();
++  private final List<Pattern> excludesRegex = new ArrayList<Pattern>();
+ 
+-  public CoverageModule(List<String> excludes) {
+-    this.excludes = excludes;
++  private static final String INCLUDES_REGEX_PREFIX = "includesRegex:";
++  private static final String EXCLUDES_REGEX_PREFIX = "excludesRegex:";
++
++  public CoverageModule(List<String> args) {
++      classifyArgs(args);
+   }
+ 
++    private void classifyArgs(List<String> args) {
++        for(String arg: args) {
++            arg = arg.trim();
++            if(arg.startsWith(INCLUDES_REGEX_PREFIX)) {
++                String inclRegex = arg.substring(INCLUDES_REGEX_PREFIX.length()).trim();
++                includesRegex.add(Pattern.compile(inclRegex));
++            } else if(arg.startsWith(EXCLUDES_REGEX_PREFIX)) {
++                String exclRegex = arg.substring(EXCLUDES_REGEX_PREFIX.length()).trim();
++                excludesRegex.add(Pattern.compile(exclRegex));
++            } else {
++                excludes.add(arg);
++            }
++        }
++    }
++
+   @Override
+   protected void configure() {
+     Multibinder.newSetBinder(binder(), FileLoadPostProcessor.class)
+@@ -62,6 +84,10 @@
+         .addBinding().to(CoverageActionDecorator.class);
+     bind(new TypeLiteral<Set<String>>(){})
+       .annotatedWith(new CoverageImpl("coverageExcludes")).toInstance(Sets.newHashSet(excludes));
++      bind(new TypeLiteral<List<Pattern>>(){})
++        .annotatedWith(new CoverageImpl("coverageIncludesRegex")).toInstance(includesRegex);
++      bind(new TypeLiteral<List<Pattern>>(){})
++        .annotatedWith(new CoverageImpl("coverageExcludesRegex")).toInstance(excludesRegex);
+     // TODO(corysmith): Remove this when there is a correct separation of phases.
+     bind(BrowserActionProvider.class).to(CoverageThreadedActionProvider.class);
+   }
