@@ -38,12 +38,12 @@ The grammar was kept as close as possible to the grammar in the "A Grammar Summa
 
 */
 
-grammar ES3Instrument ;
+
+grammar ES3 ;
 
 options
 {
-	output = template ;
-	rewrite = true;
+	output = AST ;
 	language = Java ;
 }
 
@@ -186,13 +186,8 @@ tokens
 	POS ;
 }
 
-@parser::header {
-  package com.google.jstestdriver.coverage.es3;
-  import org.antlr.runtime.tree.Tree;
-}
-@lexer::header {
-  package com.google.jstestdriver.coverage.es3;
-}
+@lexer::header {package com.google.jstestdriver.coverage.es3;}
+
 @lexer::members
 {
 private Token last;
@@ -273,12 +268,9 @@ public Token nextToken()
 	return result;		
 }
 }
-
+@parser::header {package com.google.jstestdriver.coverage.es3;}
 @parser::members
 {
-
-public java.util.Map<String, java.util.List<Integer>> linesMap = new java.util.HashMap<String, java.util.List<Integer>>();
-
 private final boolean isLeftHandSideAssign(RuleReturnScope lhs, Object[] cached)
 {
 	if (cached[0] != null)
@@ -317,17 +309,6 @@ private final boolean isLeftHandSideAssign(RuleReturnScope lhs, Object[] cached)
 	
 	cached[0] = new Boolean(result);
 	return result;
-}
-
-@SuppressWarnings("unused")
-private final static String wrapInBraces(Token start, Token stop, TokenStream tokens) {
-  if (start == null || stop == null) {    
-    return null;
-  }
-  if ("{".equals(start.getText())) {
-    return tokens.toString(start, stop);
-  }
-  return "{" + tokens.toString(start, stop) + "}";
 }
 
 private final static boolean isLeftHandSideExpression(RuleReturnScope lhs)
@@ -388,11 +369,10 @@ private final void promoteEOL(ParserRuleReturnScope rule)
 	Token lt = input.LT(1);
 	int la = lt.getType();
 	
-	// We only need to promote an EOL when the current token is offending (not a SEMIC, EOF, RBRACE, EOL or MultiLineComment).
-	// EOL and MultiLineComment are not offending as they're already promoted in a previous call to this method.
+	// We only need to promote an EOL when the current token is offending (not a SEMIC, EOF, RBRACE, EOL).
+	// EOL is not offending as it's already promoted in a previous call to this method.
 	// Promoting an EOL means switching it from off channel to on channel.
-	// A MultiLineComment gets promoted when it contains an EOL.
-	if (!(la == SEMIC || la == EOF || la == RBRACE || la == EOL || la == MultiLineComment))
+	if (!(la == SEMIC || la == EOF || la == RBRACE || la == EOL ))
 	{
 		// Start on the possition before the current token and scan backwards off channel tokens until the previous on channel token.
 		for (int ix = lt.getTokenIndex() - 1; ix > 0; ix--)
@@ -403,7 +383,7 @@ private final void promoteEOL(ParserRuleReturnScope rule)
 				// On channel token found: stop scanning.
 				break;
 			}
-			else if (lt.getType() == EOL || (lt.getType() == MultiLineComment && lt.getText().matches("/.*\r\n|\r|\n")))
+			else if (lt.getType() == EOL )
 			{
 				// We found our EOL: promote the token to on channel, position the input on it and reset the rule start.
 				lt.setChannel(Token.DEFAULT_CHANNEL);
@@ -815,13 +795,9 @@ fragment EscapeSequence
 	)
 	;
 
-fragment LineContinuation
-  : BSLASH EOL
-  ;
-
 StringLiteral
-	: SQUOTE ( ~( SQUOTE | BSLASH | LineTerminator ) | EscapeSequence | LineContinuation )* SQUOTE
-	| DQUOTE ( ~( DQUOTE | BSLASH | LineTerminator ) | EscapeSequence | LineContinuation )* DQUOTE
+	: SQUOTE ( ~( SQUOTE | BSLASH | LineTerminator ) | EscapeSequence )* SQUOTE
+	| DQUOTE ( ~( DQUOTE | BSLASH | LineTerminator ) | EscapeSequence )* DQUOTE
 	;
 
 // $>
@@ -864,51 +840,32 @@ primaryExpression
 	| literal
 	| arrayLiteral
 	| objectLiteral
-	| lpar=LPAREN expression RPAREN //-> ^( PAREXPR[$lpar, "PAREXPR"] expression )
+	| lpar=LPAREN expression RPAREN -> ^( PAREXPR[$lpar, "PAREXPR"] expression )
 	;
 
 arrayLiteral
-	: lb=LBRACK ( arrayItem ( COMMA arrayItem )* )? RBRACK
-	//-> ^( ARRAY[$lb, "ARRAY"] arrayItem* )
+	: lb=LBRACK ( arrayItem ( COMMA (arrayItem)? )* )? RBRACK
+	-> ^( ARRAY[$lb, "ARRAY"] arrayItem* )
 	;
 
 arrayItem
 	: ( expr=assignmentExpression | { input.LA(1) == COMMA }? )
-	//-> ^( ITEM $expr? )
+	-> ^( ITEM $expr? )
 	;
 
 objectLiteral
-	: lb=LBRACE ( propertyNameAndValueList ( COMMA propertyNameAndValueList )* )? RBRACE
-	//-> ^( OBJECT[$lb, "OBJECT"] nameValuePair* )
+	: lb=LBRACE ( nameValuePair ( COMMA nameValuePair )* (COMMA)? )? RBRACE
+	-> ^( OBJECT[$lb, "OBJECT"] nameValuePair* )
 	;
-
-propertyNameAndValueList
-  : name=Identifier 
-   ({ name.getText().equals("get") }? => propertyGetter | { name.getText().equals("set") }? => propertySetter | propertyValue )
-  | propertyNameNoIdentifier propertyValue
-  ;
-
-propertyGetter
- : propertyName LPAREN RPAREN functionBody
- ;
-propertySetter
- : propertyName LPAREN Identifier RPAREN functionBody
- ;
- 
-propertyValue
- : COLON assignmentExpression
- ;
-
-
+	
+nameValuePair
+	: propertyName COLON assignmentExpression
+	-> ^( NAMEDVALUE propertyName assignmentExpression )
+	;
 
 propertyName
 	: Identifier
 	| StringLiteral
-	| numericLiteral
-	;
-
-propertyNameNoIdentifier
-	: StringLiteral
 	| numericLiteral
 	;
 
@@ -928,24 +885,27 @@ memberExpression
 	;
 
 newExpression
-	: NEW primaryExpression
+	: NEW^ primaryExpression
 	;
 
+multiLineComment
+        : MultiLineComment
+        ;
 	
 arguments
 	: LPAREN ( assignmentExpression ( COMMA assignmentExpression )* )? RPAREN
-	//-> ^( ARGS assignmentExpression* )
+	-> ^( ARGS assignmentExpression* )
 	;
 	
 leftHandSideExpression
 	:
 	(
-		memberExpression 		//-> memberExpression
+		memberExpression 		-> memberExpression
 	)
 	(
-		arguments			//-> ^( CALL $leftHandSideExpression arguments )
-		| LBRACK expression RBRACK	//-> ^( BYINDEX $leftHandSideExpression expression )
-		| DOT Identifier		//-> ^( BYFIELD $leftHandSideExpression Identifier )
+		arguments			-> ^( CALL $leftHandSideExpression arguments )
+		| LBRACK expression RBRACK	-> ^( BYINDEX $leftHandSideExpression expression )
+		| DOT Identifier		-> ^( BYFIELD $leftHandSideExpression Identifier )
 	)*
 	;
 
@@ -960,7 +920,7 @@ We only must promote EOLs when the la is INC or DEC because this production is c
 In other words: only promote EOL when we are really in a postfix expression. A check on the la will ensure this.
 */
 postfixExpression
-	: leftHandSideExpression { if (input.LA(1) == INC || input.LA(1) == DEC) promoteEOL(null); } ( postfixOperator )?
+	: leftHandSideExpression { if (input.LA(1) == INC || input.LA(1) == DEC) promoteEOL(null); } ( postfixOperator^ )?
 	;
 	
 postfixOperator
@@ -974,7 +934,7 @@ postfixOperator
 
 unaryExpression
 	: postfixExpression
-	| unaryOperator unaryExpression
+	| unaryOperator^ unaryExpression
 	;
 	
 unaryOperator
@@ -994,7 +954,7 @@ unaryOperator
 // $<Multiplicative operators (11.5)
 
 multiplicativeExpression
-	: unaryExpression ( ( MUL | DIV | MOD ) unaryExpression )*
+	: unaryExpression ( ( MUL | DIV | MOD )^ unaryExpression )*
 	;
 
 // $>
@@ -1002,7 +962,7 @@ multiplicativeExpression
 // $<Additive operators (11.6)
 
 additiveExpression
-	: multiplicativeExpression ( ( ADD | SUB ) multiplicativeExpression )*
+	: multiplicativeExpression ( ( ADD | SUB )^ multiplicativeExpression )*
 	;
 
 // $>
@@ -1010,7 +970,7 @@ additiveExpression
 // $<Bitwise shift operators (11.7)
 
 shiftExpression
-	: additiveExpression ( ( SHL | SHR | SHU ) additiveExpression )*
+	: additiveExpression ( ( SHL | SHR | SHU )^ additiveExpression )*
 	;
 
 // $>
@@ -1018,11 +978,11 @@ shiftExpression
 // $<Relational operators (11.8)
 
 relationalExpression
-	: shiftExpression ( ( LT | GT | LTE | GTE | INSTANCEOF | IN ) shiftExpression )*
+	: shiftExpression ( ( LT | GT | LTE | GTE | INSTANCEOF | IN )^ shiftExpression )*
 	;
 
 relationalExpressionNoIn
-	: shiftExpression ( ( LT | GT | LTE | GTE | INSTANCEOF ) shiftExpression )*
+	: shiftExpression ( ( LT | GT | LTE | GTE | INSTANCEOF )^ shiftExpression )*
 	;
 
 // $>
@@ -1030,11 +990,11 @@ relationalExpressionNoIn
 // $<Equality operators (11.9)
 
 equalityExpression
-	: relationalExpression ( ( EQ | NEQ | SAME | NSAME ) relationalExpression )*
+	: relationalExpression ( ( EQ | NEQ | SAME | NSAME )^ relationalExpression )*
 	;
 
 equalityExpressionNoIn
-	: relationalExpressionNoIn ( ( EQ | NEQ | SAME | NSAME ) relationalExpressionNoIn )*
+	: relationalExpressionNoIn ( ( EQ | NEQ | SAME | NSAME )^ relationalExpressionNoIn )*
 	;
 
 // $>
@@ -1042,27 +1002,27 @@ equalityExpressionNoIn
 // $<Binary bitwise operators (11.10)
 
 bitwiseANDExpression
-	: equalityExpression ( AND equalityExpression )*
+	: equalityExpression ( AND^ equalityExpression )*
 	;
 
 bitwiseANDExpressionNoIn
-	: equalityExpressionNoIn ( AND equalityExpressionNoIn )*
+	: equalityExpressionNoIn ( AND^ equalityExpressionNoIn )*
 	;
 		
 bitwiseXORExpression
-	: bitwiseANDExpression ( XOR bitwiseANDExpression )*
+	: bitwiseANDExpression ( XOR^ bitwiseANDExpression )*
 	;
 		
 bitwiseXORExpressionNoIn
-	: bitwiseANDExpressionNoIn ( XOR bitwiseANDExpressionNoIn )*
+	: bitwiseANDExpressionNoIn ( XOR^ bitwiseANDExpressionNoIn )*
 	;
 	
 bitwiseORExpression
-	: bitwiseXORExpression ( OR bitwiseXORExpression )*
+	: bitwiseXORExpression ( OR^ bitwiseXORExpression )*
 	;
 	
 bitwiseORExpressionNoIn
-	: bitwiseXORExpressionNoIn ( OR bitwiseXORExpressionNoIn )*
+	: bitwiseXORExpressionNoIn ( OR^ bitwiseXORExpressionNoIn )*
 	;
 
 // $>
@@ -1070,19 +1030,19 @@ bitwiseORExpressionNoIn
 // $<Binary logical operators (11.11)
 
 logicalANDExpression
-	: bitwiseORExpression ( LAND bitwiseORExpression )*
+	: bitwiseORExpression ( LAND^ bitwiseORExpression )*
 	;
 
 logicalANDExpressionNoIn
-	: bitwiseORExpressionNoIn ( LAND bitwiseORExpressionNoIn )*
+	: bitwiseORExpressionNoIn ( LAND^ bitwiseORExpressionNoIn )*
 	;
 	
 logicalORExpression
-	: logicalANDExpression ( LOR logicalANDExpression )*
+	: logicalANDExpression ( LOR^ logicalANDExpression )*
 	;
 	
 logicalORExpressionNoIn
-	: logicalANDExpressionNoIn ( LOR logicalANDExpressionNoIn )*
+	: logicalANDExpressionNoIn ( LOR^ logicalANDExpressionNoIn )*
 	;
 
 // $>
@@ -1090,11 +1050,11 @@ logicalORExpressionNoIn
 // $<Conditional operator (11.12)
 
 conditionalExpression
-	: logicalORExpression ( QUE assignmentExpression COLON assignmentExpression )?
+	: logicalORExpression ( QUE^ assignmentExpression COLON! assignmentExpression )?
 	;
 
 conditionalExpressionNoIn
-	: logicalORExpressionNoIn ( QUE assignmentExpressionNoIn COLON assignmentExpressionNoIn )?
+	: logicalORExpressionNoIn ( QUE^ assignmentExpressionNoIn COLON! assignmentExpressionNoIn )?
 	;
 	
 // $>
@@ -1129,7 +1089,7 @@ assignmentExpression
 	Object[] isLhs = new Object[1];
 }
 	: lhs=conditionalExpression
-	( { isLeftHandSideAssign(lhs, isLhs) }? assignmentOperator assignmentExpression )?	
+	( { isLeftHandSideAssign(lhs, isLhs) }? assignmentOperator^ assignmentExpression )?	
 	;
 
 assignmentOperator
@@ -1142,7 +1102,7 @@ assignmentExpressionNoIn
 	Object[] isLhs = new Object[1];
 }
 	: lhs=conditionalExpressionNoIn
-	( { isLeftHandSideAssign(lhs, isLhs) }? assignmentOperator assignmentExpressionNoIn )?
+	( { isLeftHandSideAssign(lhs, isLhs) }? assignmentOperator^ assignmentExpressionNoIn )?
 	;
 	
 // $>
@@ -1151,14 +1111,14 @@ assignmentExpressionNoIn
 
 expression
 	: exprs+=assignmentExpression ( COMMA exprs+=assignmentExpression )*
-	//-> { $exprs.size() > 1 }? ^( CEXPR $exprs+ )
-	//-> $exprs
+	-> { $exprs.size() > 1 }? ^( CEXPR $exprs+ )
+	-> $exprs
 	;
 
 expressionNoIn
 	: exprs+=assignmentExpressionNoIn ( COMMA exprs+=assignmentExpressionNoIn )*
-	//-> { $exprs.size() > 1 }? ^( CEXPR $exprs+ )
-	//-> $exprs
+	-> { $exprs.size() > 1 }? ^( CEXPR $exprs+ )
+	-> $exprs
 	;
 
 // $>
@@ -1180,7 +1140,7 @@ In the following situations an ECMA 3 parser should auto insert absent but gramm
 
 The RBRACE is handled by matching it but not consuming it.
 The EOF needs no further handling because it is not consumed by default.
-The EOL situation is handled by promoting the EOL or MultiLineComment with an EOL present from off channel to on channel
+The EOL situation is handled by promoting the EOL from off channel to on channel
 and thus making it parseable instead of handling it as white space. This promoting is done in the action promoteEOL.
 */
 semic
@@ -1194,7 +1154,7 @@ semic
 	: SEMIC
 	| EOF
 	| RBRACE { input.rewind(marker); }
-	| EOL | MultiLineComment // (with EOL in it)
+	| EOL
 	;
 
 /*
@@ -1207,25 +1167,8 @@ options
 {
 	k = 1 ;
 }
-scope {
-   boolean isBlock;
-}
-@init{
-        boolean instrument = false;
-       
-	if ($start.getLine() > $program::stopLine) {
-	  $program::stopLine = $start.getLine();
-	  instrument = true;
-	}	
-}
-@after {
-        if (instrument && !$statement::isBlock) {
-           $program::executableLines.add($start.getLine());
-        }
-}
-	: ({ $statement::isBlock = input.LA(1) == LBRACE }? block | statementTail)
-	  -> {instrument && !$statement::isBlock}? instrument(stmt={$text}, hash = {$program::hash}, ln = {$start.getLine()})
-	  -> pass(stmt={$text})
+	: { input.LA(1) == LBRACE }? block
+	| statementTail
 	;
 	
 statementTail
@@ -1248,7 +1191,7 @@ statementTail
 
 block
 	: lb=LBRACE statement* RBRACE
-	//-> ^( BLOCK[$lb, "BLOCK"] statement* )
+	-> ^( BLOCK[$lb, "BLOCK"] statement* )
 	;
 
 // $>
@@ -1257,15 +1200,15 @@ block
 
 variableStatement
 	: VAR variableDeclaration ( COMMA variableDeclaration )* semic
-	//-> ^( VAR variableDeclaration+ )
+	-> ^( VAR variableDeclaration+ )
 	;
 
 variableDeclaration
-	: Identifier ( ASSIGN assignmentExpression )?
+	: Identifier ( ASSIGN^ assignmentExpression )?
 	;
 	
 variableDeclarationNoIn
-	: Identifier ( ASSIGN assignmentExpressionNoIn )?
+	: Identifier ( ASSIGN^ assignmentExpressionNoIn )?
 	;
 
 // $>
@@ -1273,7 +1216,7 @@ variableDeclarationNoIn
 // $<Empty statement (12.3)
 
 emptyStatement
-	: SEMIC
+	: SEMIC!
 	;
 
 // $>
@@ -1282,36 +1225,27 @@ emptyStatement
 
 /*
 The look ahead check on LBRACE and FUNCTION the specification mentions has been left out and its function, resolving the ambiguity between:
-- functionExpression and functionDeclarationstatement
+- functionExpression and functionDeclaration
 - block and objectLiteral
 are moved to the statement and sourceElement rules.
 */
 expressionStatement
-	: expression semic
+	: expression semic!
 	;
 
 // $>
 	
 // $<The if statement (12.5)
 
-
 ifStatement
 // The predicate is there just to get rid of the warning. ANTLR will handle the dangling else just fine.
-	: IF LPAREN expression RPAREN statement ( { input.LA(1) == ELSE }? elseStatement)?
-	//push the block wrap to the statement?
-	->  template(p = {input.toString($start.getTokenIndex(), $statement.start.getTokenIndex() - 1)},
-	             body = {wrapInBraces($statement.start, $statement.stop, input)},
-	             elseClause = {
-	             $elseStatement.stop != null ? input.toString($statement.stop.getTokenIndex()+1, $elseStatement.stop.getTokenIndex() ) : null}) "<p><body><elseClause>"
-	;
-
-elseStatement
-	: ELSE statement
-	-> template(prefix = {input.toString($start.getTokenIndex(), $statement.start.getTokenIndex() - 1)}, stmt = {wrapInBraces($statement.start, $statement.stop, input)}) "<prefix><stmt>"
+	: IF LPAREN expression RPAREN statement ( { input.LA(1) == ELSE }? ELSE statement )?
+	-> ^( IF expression statement (ELSE statement)? )
 	;
 
 // $>
-	
+
+
 // $<Iteration statements (12.6)
 
 iterationStatement
@@ -1322,17 +1256,11 @@ iterationStatement
 	
 doStatement
 	: DO statement WHILE LPAREN expression RPAREN semic
-	-> template(pre = {input.toString($start.getTokenIndex(), $statement.start.getTokenIndex() - 1)},
-	            stmt = {wrapInBraces($statement.start, $statement.stop, input)},
-	            post = {input.toString($WHILE, $RPAREN)},
-	            end = {$semic.text}) "<pre><stmt><post><end>"
+	-> ^( DO statement expression )
 	;
 	
 whileStatement
-	: WHILE LPAREN expression RPAREN statement
-	-> template(pre = {input.toString($start.getTokenIndex(), $statement.start.getTokenIndex() - 1)},
-	            stmt = {wrapInBraces($statement.start, $statement.stop, input)}
-	            ) "<pre><stmt>"
+	: WHILE^ LPAREN! expression RPAREN! statement
 	;
 
 /*
@@ -1377,10 +1305,7 @@ Furthermore backtracking seemed to have 3 major drawbacks:
 - when introducing a k value to optimize the backtracking away, ANTLR runs out of heap space
 */
 forStatement
-	: FOR LPAREN forControl RPAREN statement
-	  -> template(pre = {input.toString($start.getTokenIndex(), $statement.start.getTokenIndex() - 1)},
-	              stmt = {wrapInBraces($statement.start, $statement.stop, input)}
-	              ) "<pre><stmt>"
+	: FOR^ LPAREN! forControl RPAREN! statement
 	;
 
 forControl
@@ -1394,12 +1319,12 @@ forControlVar
 	(
 		(
 			IN expression
-			//-> ^( FORITER ^( VAR variableDeclarationNoIn ) ^( EXPR expression ) )
+			-> ^( FORITER ^( VAR variableDeclarationNoIn ) ^( EXPR expression ) )
 		)
 		|
 		(
 			( COMMA variableDeclarationNoIn )* SEMIC ex1=expression? SEMIC ex2=expression?
-			//-> ^( FORSTEP ^( VAR variableDeclarationNoIn+ ) ^( EXPR $ex1? ) ^( EXPR $ex2? ) )
+			-> ^( FORSTEP ^( VAR variableDeclarationNoIn+ ) ^( EXPR $ex1? ) ^( EXPR $ex2? ) )
 		)
 	)
 	;
@@ -1413,19 +1338,19 @@ forControlExpression
 	( 
 		{ isLeftHandSideIn(ex1, isLhs) }? (
 			IN ex2=expression
-			//-> ^( FORITER ^( EXPR $ex1 ) ^( EXPR $ex2 ) )
+			-> ^( FORITER ^( EXPR $ex1 ) ^( EXPR $ex2 ) )
 		)
 		|
 		(
 			SEMIC ex2=expression? SEMIC ex3=expression?
-			//-> ^( FORSTEP ^( EXPR $ex1 ) ^( EXPR $ex2? ) ^( EXPR $ex3? ) )
+			-> ^( FORSTEP ^( EXPR $ex1 ) ^( EXPR $ex2? ) ^( EXPR $ex3? ) )
 		)
 	)
 	;
 
 forControlSemic
 	: SEMIC ex1=expression? SEMIC ex2=expression?
-	//-> ^( FORSTEP ^( EXPR ) ^( EXPR $ex1? ) ^( EXPR $ex2? ) )
+	-> ^( FORSTEP ^( EXPR ) ^( EXPR $ex1? ) ^( EXPR $ex2? ) )
 	;
 
 // $>
@@ -1438,7 +1363,7 @@ no line terminators allowed beween CONTINUE and the optional identifier.
 As an optimization we check the la first to decide whether there is an identier following.
 */
 continueStatement
-	: CONTINUE { if (input.LA(1) == Identifier) promoteEOL(null); } Identifier? semic
+	: CONTINUE^ { if (input.LA(1) == Identifier) promoteEOL(null); } Identifier? semic!
 	;
 
 // $>
@@ -1451,7 +1376,7 @@ no line terminators allowed beween BREAK and the optional identifier.
 As an optimization we check the la first to decide whether there is an identier following.
 */
 breakStatement
-	: BREAK { if (input.LA(1) == Identifier) promoteEOL(null); } Identifier? semic
+	: BREAK^ { if (input.LA(1) == Identifier) promoteEOL(null); } Identifier? semic!
 	;
 
 // $>
@@ -1472,7 +1397,7 @@ return;
 1;
 */
 returnStatement
-	: RETURN { promoteEOL(null); } expression? semic
+	: RETURN^ { promoteEOL(null); } expression? semic!
 	;
 
 // $>
@@ -1480,10 +1405,7 @@ returnStatement
 // $<The with statement (12.10)
 
 withStatement
-	: WITH LPAREN expression RPAREN statement
-	-> template(pre = {input.toString($start.getTokenIndex(), $statement.start.getTokenIndex() - 1)},
-	            stmt = {wrapInBraces($statement.start, $statement.stop, input)}
-	            ) "<pre><stmt>"
+	: WITH^ LPAREN! expression RPAREN! statement
 	;
 
 // $>
@@ -1496,15 +1418,15 @@ switchStatement
 	int defaultClauseCount = 0;
 }
 	: SWITCH LPAREN expression RPAREN LBRACE ( { defaultClauseCount == 0 }?=> defaultClause { defaultClauseCount++; } | caseClause )* RBRACE
-	//-> ^( SWITCH expression defaultClause? caseClause* )
+	-> ^( SWITCH expression defaultClause? caseClause* )
 	;
 
 caseClause
-	: CASE expression COLON statement*
+	: CASE^ expression COLON! statement*
 	;
 	
 defaultClause
-	: DEFAULT COLON statement*
+	: DEFAULT^ COLON! statement*
 	;
 
 // $>
@@ -1513,7 +1435,7 @@ defaultClause
 
 labelledStatement
 	: Identifier COLON statement
-	//-> ^( LABELLED Identifier statement )
+	-> ^( LABELLED Identifier statement )
 	;
 
 // $>
@@ -1536,7 +1458,7 @@ new Error();
 which will yield a recognition exception!
 */
 throwStatement
-	: THROW { promoteEOL(null); } expression semic
+	: THROW^ { promoteEOL(null); } expression semic!
 	;
 
 // $>
@@ -1544,15 +1466,15 @@ throwStatement
 // $<The try statement (12.14)
 
 tryStatement
-	: TRY block ( catchClause finallyClause? | finallyClause )
+	: TRY^ block ( catchClause finallyClause? | finallyClause )
 	;
 	
 catchClause
-	: CATCH LPAREN Identifier RPAREN block
+	: CATCH^ LPAREN! Identifier RPAREN! block
 	;
 	
 finallyClause
-	: FINALLY block
+	: FINALLY^ block
 	;
 
 // $>
@@ -1565,34 +1487,24 @@ finallyClause
 
 // $<	Function Definition (13)
 
-
 functionDeclaration
-@init{
-        boolean instrument = false;
-	if ($start.getLine() > $program::stopLine) {
-	  $program::executableLines.add($start.getLine());
-	  $program::stopLine = $start.getLine();
-	  instrument = true;
-	}	
-}
 	: FUNCTION name=Identifier formalParameterList functionBody
-	  -> {instrument}? instrument(stmt={$text}, ln={$start.getLine()},  hash = {$program::hash})
-	  -> pass(stmt={$text})
+	-> ^( FUNCTION $name formalParameterList functionBody )
 	;
 
 functionExpression
 	: FUNCTION name=Identifier? formalParameterList functionBody
-	// -> ( FUNCTION $name? formalParameterList functionBody )
+	-> ^( FUNCTION $name? formalParameterList functionBody )
 	;
 
 formalParameterList
 	: LPAREN ( Identifier ( COMMA Identifier )* )? RPAREN
-	//-> ^( ARGS Identifier* )
+	-> ^( ARGS Identifier* )
 	;
 
 functionBody
 	: lb=LBRACE sourceElement* RBRACE
-	//-> ^( BLOCK[$lb, "BLOCK"] sourceElement* )
+	-> ^( BLOCK[$lb, "BLOCK"] sourceElement* )
 	;
 
 // $>
@@ -1600,21 +1512,7 @@ functionBody
 // $<	Program (14)
 
 program
-scope {
-  String name;
-  String hash;
-  java.util.List<Integer> executableLines;
-  int stopLine;
-}
-@init {
-  String name = getSourceName();
-  $program::name = name;
-  $program::hash = Integer.toString(Math.abs(name.hashCode()), Character.MAX_RADIX);
-  $program::executableLines = new java.util.LinkedList();
-  $program::stopLine = 0;
-}
-	: (sourceElement*) {java.util.Collections.sort($program::executableLines); linesMap.put($program::name, $program::executableLines);}
-	-> init_instrument(stmt = {$text}, hash = {$program::hash}, name = {name}, lines = {$program::executableLines.toString()})
+	: sourceElement*
 	;
 
 /*
